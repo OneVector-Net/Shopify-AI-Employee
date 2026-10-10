@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Validates prisma/schema.prisma and generates the Prisma Client's
+      # types — neither step needs a reachable database, so no
+      # DATABASE_URL/service container is set up here. This is exactly
+      # the check that would have caught the SQLite-doesn't-support-enums
+      # bug before it ever reached a PR.
+      - run: npx prisma validate
+      - run: npx prisma generate
+
+      - run: npx tsc --noEmit

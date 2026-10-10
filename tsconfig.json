@@ -2,7 +2,9 @@
   "include": ["**/*.ts", "**/*.tsx"],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["vite/client"],
     "isolatedModules": true,
+    "skipLibCheck": true,
     "esModuleInterop": true,
     "jsx": "react-jsx",
     "module": "ESNext",
