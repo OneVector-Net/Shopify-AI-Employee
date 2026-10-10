@@ -117,6 +117,19 @@ export async function requestGuardrailChange(params: {
   return { ok: true };
 }
 
+/** Reads one soft guardrail's current configured value (e.g. Sam's
+ * refund ceiling), falling back to undefined if never set/seeded. */
+export async function getSoftGuardrailValue(
+  shopId: string,
+  employeeId: EmployeeId,
+  key: string,
+): Promise<string | undefined> {
+  const row = await db.guardrailSetting.findUnique({
+    where: { shopId_employeeId_key: { shopId, employeeId, key } },
+  });
+  return row?.value;
+}
+
 export async function getGuardrails(shopId: string, employeeId: EmployeeId) {
   const soft = await db.guardrailSetting.findMany({ where: { shopId, employeeId } });
   const hard = [

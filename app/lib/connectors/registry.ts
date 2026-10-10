@@ -2,6 +2,7 @@ import type { Connector } from "~/lib/connectors/types";
 import { gorgiasConnector } from "~/lib/connectors/gorgias";
 import { klaviyoConnector } from "~/lib/connectors/klaviyo";
 import { shopifyCatalogConnector } from "~/lib/connectors/shopify-catalog";
+import { shopifyOrdersConnector } from "~/lib/connectors/shopify-orders";
 
 // Central registry — adding a new third-party app means writing one file
 // implementing the Connector interface and registering it here. Nothing
@@ -15,6 +16,7 @@ function register(connector: Connector) {
 register(gorgiasConnector);
 register(klaviyoConnector);
 register(shopifyCatalogConnector);
+register(shopifyOrdersConnector);
 
 export function getConnector(id: string): Connector | undefined {
   return registry.get(id);

@@ -41,7 +41,12 @@ export const EMPLOYEES: Record<EmployeeId, EmployeeDefinition> = {
     painPoint: "Support ticket overhead & WISMO / returns",
     avatarInitial: "S",
     accentColor: "#2c6ecb",
-    connectors: ["gorgias", "aftership", "loop"],
+    // shopify_orders needs no third-party OAuth — refunds are a Shopify
+    // concept, not a Gorgias one, so the highest-stakes part of Sam's job
+    // runs on the native Admin API (see
+    // app/lib/connectors/shopify-orders.ts). Gorgias/AfterShip/Loop stay
+    // stubbed until real OAuth credentials are available for them.
+    connectors: ["shopify_orders", "gorgias", "aftership", "loop"],
     hardGuardrails: [
       "Refund / credit requires a human-approval ceiling",
       "Legal or safety-sensitive complaints always escalate, never self-resolved",

@@ -14,9 +14,11 @@ import {
 } from "@shopify/polaris";
 import db from "~/db.server";
 import { shopifyCatalogConnector } from "~/lib/connectors/shopify-catalog";
+import { shopifyOrdersConnector } from "~/lib/connectors/shopify-orders";
 import { buildSeoDiffs, proposeSeoBulkUpdate } from "~/lib/ellie.server";
 import { EMPLOYEES, type EmployeeId } from "~/lib/employees";
 import { decidePendingAction, getGuardrails } from "~/lib/guardrails.server";
+import { buildRefundDraft, proposeRefund, type RefundDraft } from "~/lib/sam.server";
 import { authenticate } from "~/shopify.server";
 
 function isEmployeeId(value: string): value is EmployeeId {
@@ -51,13 +53,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const guardrails = await getGuardrails(shop.id, employeeId);
 
-  // Only Ellie has a real workflow wired up so far (see README) — the
-  // other four employees get the generic page below until their
-  // connectors are built the same way hers was.
+  // Only Ellie and Sam have real workflows wired up so far (see README) —
+  // the other three employees get the generic page below until their
+  // connectors are built the same way.
   const seoDiffs =
     employeeId === "ellie" && state.enabled ? await buildSeoDiffs(shop.id, 10) : [];
+  const refundDraft: RefundDraft | null =
+    employeeId === "sam" && state.enabled ? await buildRefundDraft(shop.id) : null;
 
-  return json({ employeeId, state, pendingActions, guardrails, seoDiffs });
+  return json({ employeeId, state, pendingActions, guardrails, seoDiffs, refundDraft });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -96,6 +100,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return redirect(`/app/employees/${employeeId}`);
   }
 
+  if (intent === "propose_refund" && employeeId === "sam") {
+    // Recompute the draft server-side rather than trusting anything the
+    // client posted back — never trust a client-submitted amount for a
+    // financial action.
+    const draft = await buildRefundDraft(shop.id);
+    if (draft) {
+      await proposeRefund(shop.id, draft);
+    }
+    return redirect(`/app/employees/${employeeId}`);
+  }
+
   if (intent === "approve" || intent === "decline") {
     const pendingActionId = String(formData.get("pendingActionId"));
     const decided = await decidePendingAction({
@@ -125,6 +140,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         },
       });
     }
+    if (intent === "approve" && employeeId === "sam") {
+      const payload = JSON.parse(decided.payload) as RefundDraft;
+      const result = await shopifyOrdersConnector.execute(shop.id, decided.id, payload);
+      await db.pendingAction.update({
+        where: { id: decided.id },
+        data: {
+          status: result.ok ? "EXECUTED" : "FAILED",
+          executedAt: new Date(),
+          failureReason: result.ok ? null : result.message,
+        },
+      });
+    }
 
     return redirect(`/app/employees/${employeeId}`);
   }
@@ -133,7 +160,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EmployeeWorkspace() {
-  const { employeeId, state, pendingActions, guardrails, seoDiffs } =
+  const { employeeId, state, pendingActions, guardrails, seoDiffs, refundDraft } =
     useLoaderData<typeof loader>();
   const employee = EMPLOYEES[employeeId as EmployeeId];
 
@@ -202,12 +229,60 @@ export default function EmployeeWorkspace() {
           </Card>
         )}
 
-        {employeeId !== "ellie" && (
+        {employeeId === "sam" && state.enabled && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingSm">
+                Refund draft
+              </Text>
+              {!refundDraft ? (
+                <Text as="p" tone="subdued">
+                  No recent orders to draft against right now.
+                </Text>
+              ) : (
+                <>
+                  <BlockStack gap="150">
+                    <InlineStack align="space-between">
+                      <Text as="span">Order</Text>
+                      <Text as="span" fontWeight="semibold">
+                        {refundDraft.orderName}
+                      </Text>
+                    </InlineStack>
+                    <InlineStack align="space-between">
+                      <Text as="span">Customer</Text>
+                      <Text as="span" fontWeight="semibold">
+                        {refundDraft.customerName}
+                      </Text>
+                    </InlineStack>
+                    <InlineStack align="space-between">
+                      <Text as="span">Amount</Text>
+                      <Text as="span" fontWeight="semibold">
+                        {`${refundDraft.amount} ${refundDraft.currencyCode}`}
+                      </Text>
+                    </InlineStack>
+                    <Text as="p" tone="subdued">
+                      {refundDraft.reason}
+                    </Text>
+                    {refundDraft.exceedsCeiling && (
+                      <Badge tone="warning">{`Exceeds the ${refundDraft.ceiling} refund ceiling — extra scrutiny`}</Badge>
+                    )}
+                  </BlockStack>
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="propose_refund" />
+                    <Button submit>Propose this refund</Button>
+                  </Form>
+                </>
+              )}
+            </BlockStack>
+          </Card>
+        )}
+
+        {employeeId !== "ellie" && employeeId !== "sam" && (
           <Card>
             <Text as="p" tone="subdued">
-              {employee.name}&apos;s real workflow isn&apos;t built yet — Ellie is the first
-              employee wired end-to-end. This page shows her guardrails and will gain a real
-              workflow the same way once it&apos;s her turn.
+              {employee.name}&apos;s real workflow isn&apos;t built yet — Ellie and Sam are
+              wired end-to-end so far. This page shows guardrails and will gain a real
+              workflow the same way once it&apos;s this employee&apos;s turn.
             </Text>
           </Card>
         )}

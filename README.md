@@ -143,11 +143,40 @@ there is to convert. None of the core logic (guardrails, connectors,
 audit log, data model) is affected either way — this is isolated to the
 two UI route files.
 
+## Sam — refunds, built end-to-end
+
+Sam's highest-stakes action (issuing a refund) runs on **Shopify's own
+Admin API**, not Gorgias — a refund is a Shopify concept, Gorgias is
+where the support conversation happens. That means the part of Sam's job
+with real financial consequences needs zero third-party OAuth, same as
+Ellie's catalog connector (`app/lib/connectors/shopify-orders.ts`,
+`app/lib/sam.server.ts`).
+
+Her workflow is real end-to-end: fetch the most recent order → compare
+the refund amount against the operator-configured ceiling
+(`refund_ceiling_usd`, flagged with a visible warning badge if exceeded,
+never silently blocked — confirm-to-execute means every refund needs
+approval regardless) → `proposeAction()` queues it → operator sees the
+actual order/customer/amount and approves or declines → approval runs
+the real two-step Shopify refund (find the order's original transaction,
+then refund against it) via `shopifyOrdersConnector.execute()`.
+
+**Known caveat, bigger than Ellie's:** Shopify's refund API refunds
+*against* a transaction (`parentId`), not a bare amount — this is
+implemented as a genuine two-step fetch-then-refund, but the exact
+`refundCreate` input shape and which scope it actually requires weren't
+verified against live docs (same `shopify.dev` access limitation noted
+above). Given this moves real money, verify this thoroughly — including
+against a store using a gateway other than whatever test environment
+you have — before it touches a live customer's order.
+
+**Gorgias itself is still a stub.** Real ticket reading/replying needs a
+Gorgias developer OAuth app, which this project doesn't have yet. Sam
+currently drafts her refund reason without reading an actual support
+ticket — see `app/lib/sam.server.ts` for exactly where that stub lives.
+
 ## Suggested next step
 
-Ellie validated the pattern (see above). Next: wire up Sam the same way
-— real Gorgias OAuth + connector, a real WISMO/refund workflow through
-the same `proposeAction` → approve → `execute()` path — before touching
-Liz, Max, or Mia. Sam is a bigger lift (a real third-party OAuth
-integration, Protected Customer Data review, customer-facing judgment
-calls) so budget more time for her than Ellie took.
+Liz, Max, and Mia remain. Per the same rollout logic: Max is the next
+lowest-risk candidate (draft-only purchase recommendations, no money
+actually moves — that stays hard-guardrailed off entirely for now).
