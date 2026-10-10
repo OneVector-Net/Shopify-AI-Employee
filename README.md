@@ -16,6 +16,7 @@ Sam, Max, Mia, Ellie) depends on, built once rather than five times.
 | Connector framework (interface + registry) | `app/lib/connectors/` |
 | Data model (Shop, EmployeeState, ConnectorCredential, PendingAction, GuardrailSetting, AuditLogEntry) | `prisma/schema.prisma` |
 | Shopify OAuth | `app/shopify.server.ts`, `app/routes/auth.$.tsx` |
+| **Ellie, end-to-end (first employee wired for real)** | `app/lib/connectors/shopify-catalog.ts`, `app/lib/ellie.server.ts`, `app/routes/app.employees.$employeeId.tsx` |
 
 Stack: Remix + TypeScript + Prisma + Polaris + App Bridge — Shopify's
 current official stack for embedded admin apps, chosen specifically
@@ -23,30 +24,53 @@ because it gives native Polaris components for free rather than hand-
 rebuilding Shopify's design system (see the wireframe discussion this
 scaffold follows up on).
 
+## Ellie — the first employee built end-to-end
+
+Per the rollout plan, Ellie went first: lowest blast radius (no money,
+not customer-facing), and the only employee that needs **zero**
+third-party connectors for v1 — she runs on Shopify's own Admin API via
+`app/lib/connectors/shopify-catalog.ts`, using the app's own installed
+session (`unauthenticated.admin()`), not a stored OAuth credential.
+
+Her workflow (`app/routes/app.employees.$employeeId.tsx`,
+`app/lib/ellie.server.ts`) is real end-to-end: fetch real products →
+build a real diff → `proposeAction()` queues it as a `PendingAction`
+(blocked entirely if write access isn't enabled, per guardrail rule #1)
+→ operator sees an actual before/after table and approves or declines →
+approval calls `shopifyCatalogConnector.execute()`, which is the one
+place in the codebase allowed to do that, and only after an APPROVED
+decision is on record. Nothing in this path is a stub except the SEO
+copy itself (see below).
+
+**Known caveat:** the GraphQL query/mutation shapes in
+`shopify-catalog.ts` (especially `productUpdate`'s input) were written
+from Admin API convention, not verified against the live schema —
+`shopify.dev` was unreachable from this environment. Confirm field names
+before relying on this against a real store.
+
 ## What's deliberately stubbed, not yet real
 
-- **Connectors** (`app/lib/connectors/gorgias.ts`, `klaviyo.ts`) return
-  fake data and don't call real APIs yet. The shape is real; the HTTP
-  calls and OAuth are a follow-up task per connector.
+- **The other four connectors** (`app/lib/connectors/gorgias.ts`,
+  `klaviyo.ts`) return fake data and don't call real APIs yet. The shape
+  is real; HTTP calls and OAuth are a follow-up task per connector, the
+  same way Ellie's was just done for real.
+- **SEO copy generation** (`app/lib/ellie.server.ts#generateSeoSuggestion`)
+  is a deterministic placeholder, not a real LLM call — intentionally,
+  so the rest of the pipeline could be built and tested without an LLM
+  integration in place yet.
 - **Secrets vault** — `ConnectorCredential.secretRef` is an opaque
   pointer, not a working implementation. See
   `app/lib/connectors/README.md` for why this needs a real secrets
-  manager before any connector goes live, and why it's not safe to fill
-  in with an env var as a shortcut.
-- **Execution step** — approving a `PendingAction` does not yet call a
-  connector's `execute()`. That wiring is intentionally a separate piece
-  of code so drafting, approving, and executing stay three distinct,
-  auditable steps (PRD feature #18).
-- **Permission-upgrade flow** (read-only → write-scoped via Shopify's
-  OAuth scope-update) is not built yet — `EmployeeState.permissionTier`
-  exists in the schema but nothing flips it yet except direct DB access.
+  manager before any *third-party* connector goes live (Ellie's own
+  connector doesn't need one at all, which is why it was first).
+- **Permission-upgrade flow** — the "Enable write access" button on an
+  employee's page flips `EmployeeState` directly rather than going
+  through Shopify's real OAuth scope-update prompt (PRD feature #17).
+  Fine for exercising the rest of the pipeline locally; needs replacing
+  before this goes in front of a real merchant.
 - **Onboarding UI** (the guided, conversational per-employee setup) isn't
   built — `seedDefaultGuardrails()` exists so there's something sane to
   seed once it is.
-- Only two connectors are stubbed (Gorgias, Klaviyo) as the reference
-  pattern — the rest (AfterShip, Loop, Smile.io, ReCharge/Skio,
-  Fabrikatör, etc.) follow the same shape in
-  `app/lib/connectors/types.ts`.
 
 ## Local setup
 
@@ -99,8 +123,9 @@ two UI route files.
 
 ## Suggested next step
 
-Per the PRD's rollout plan: validate this core against **one employee**
-before replicating the pattern for the rest. Wire up Sam's or Ellie's
-real connector(s) end-to-end (OAuth, real data fetch, one real guarded
-write action through the PendingAction → approval → execute path) before
-touching Liz, Max, or Mia.
+Ellie validated the pattern (see above). Next: wire up Sam the same way
+— real Gorgias OAuth + connector, a real WISMO/refund workflow through
+the same `proposeAction` → approve → `execute()` path — before touching
+Liz, Max, or Mia. Sam is a bigger lift (a real third-party OAuth
+integration, Protected Customer Data review, customer-facing judgment
+calls) so budget more time for her than Ellie took.

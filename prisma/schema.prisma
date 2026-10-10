@@ -44,24 +44,23 @@ model Shop {
 }
 
 // Which employees a shop has enabled, and at what permission tier.
-// PermissionTier is the "single app, scope-toggle" model (PRD feature #17):
-// every employee starts READ_ONLY and is only escalated with an explicit
-// operator action per employee.
-enum PermissionTier {
-  READ_ONLY
-  WRITE_SCOPED // can draft/propose actions; nothing executes without approval
-}
-
+// `permissionTier` is "READ_ONLY" | "WRITE_SCOPED" (can draft/propose
+// actions; nothing executes without approval) — the "single app,
+// scope-toggle" model (PRD feature #17): every employee starts
+// READ_ONLY and is only escalated with an explicit operator action.
+// Plain String, not a Prisma enum, because SQLite (the local dev
+// datasource) doesn't support native enum columns; the allowed values
+// are enforced in application code (see app/lib/guardrails.server.ts).
 model EmployeeState {
-  id                String         @id @default(cuid())
-  shopId            String
-  shop              Shop           @relation(fields: [shopId], references: [id])
-  employeeId        String // "liz" | "sam" | "max" | "mia" | "ellie" — see app/lib/employees.ts
-  enabled           Boolean        @default(false)
-  permissionTier    PermissionTier @default(READ_ONLY)
-  onboardingComplete Boolean       @default(false)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id                 String   @id @default(cuid())
+  shopId             String
+  shop               Shop     @relation(fields: [shopId], references: [id])
+  employeeId         String // "liz" | "sam" | "max" | "mia" | "ellie" — see app/lib/employees.ts
+  enabled            Boolean  @default(false)
+  permissionTier     String   @default("READ_ONLY")
+  onboardingComplete Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@unique([shopId, employeeId])
 }
@@ -70,25 +69,22 @@ model EmployeeState {
 // (e.g. Sam <-> Gorgias). Tokens are never stored in plaintext here —
 // `secretRef` points at the secrets vault (see app/lib/connectors/README.md);
 // this table only tracks connection *state*, never the credential itself.
-enum ConnectorStatus {
-  CONNECTED
-  DEGRADED // reachable but failing health checks / stale data
-  DISCONNECTED
-}
-
+// `status` is "CONNECTED" | "DEGRADED" (reachable but failing health
+// checks / stale data) | "DISCONNECTED" — plain String for the same
+// SQLite-enum reason as EmployeeState.permissionTier above.
 model ConnectorCredential {
-  id               String          @id @default(cuid())
-  shopId           String
-  shop             Shop            @relation(fields: [shopId], references: [id])
-  connectorId      String // "klaviyo" | "gorgias" | "aftership" | ... — see app/lib/connectors/registry.ts
-  employeeId       String // which employee this connection serves
-  status           ConnectorStatus @default(DISCONNECTED)
-  secretRef        String? // opaque pointer into the secrets vault, never a raw token
-  scopesGranted    String? // comma-separated scopes actually granted
+  id                String    @id @default(cuid())
+  shopId            String
+  shop              Shop      @relation(fields: [shopId], references: [id])
+  connectorId       String // "klaviyo" | "gorgias" | "shopify_catalog" | ... — see app/lib/connectors/registry.ts
+  employeeId        String // which employee this connection serves
+  status            String    @default("DISCONNECTED")
+  secretRef         String? // opaque pointer into the secrets vault, never a raw token
+  scopesGranted     String? // comma-separated scopes actually granted
   lastHealthCheckAt DateTime?
-  lastHealthOk     Boolean?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  lastHealthOk      Boolean?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@unique([shopId, connectorId, employeeId])
 }
@@ -97,49 +93,39 @@ model ConnectorCredential {
 // HARD rows are seeded by code (see app/lib/guardrails.server.ts) and are
 // not editable through the normal settings UI — they exist here only so
 // the UI has something to *display*. SOFT rows are the operator-editable
-// ones (e.g. Sam's refund ceiling).
-enum GuardrailKind {
-  HARD
-  SOFT
-}
-
+// ones (e.g. Sam's refund ceiling). `kind` is "HARD" | "SOFT" — plain
+// String for the same SQLite-enum reason noted above.
 model GuardrailSetting {
-  id         String        @id @default(cuid())
+  id         String   @id @default(cuid())
   shopId     String
-  shop       Shop          @relation(fields: [shopId], references: [id])
+  shop       Shop     @relation(fields: [shopId], references: [id])
   employeeId String
   key        String // e.g. "refund_ceiling_usd", "return_window_days"
-  kind       GuardrailKind
+  kind       String
   value      String // stored as a string; interpreted per-key in code
-  updatedAt  DateTime      @updatedAt
+  updatedAt  DateTime @updatedAt
 
   @@unique([shopId, employeeId, key])
 }
 
 // The confirm-to-execute queue (PRD feature #18). An employee that wants
 // to take a write action creates a PendingAction instead of acting
-// directly; nothing in `payload` is executed until an operator approves it.
-enum PendingActionStatus {
-  PENDING
-  APPROVED
-  DECLINED
-  EXECUTED
-  FAILED
-}
-
+// directly; nothing in `payload` is executed until an operator approves
+// it. `status` is "PENDING" | "APPROVED" | "DECLINED" | "EXECUTED" |
+// "FAILED" — plain String for the same SQLite-enum reason noted above.
 model PendingAction {
-  id          String              @id @default(cuid())
-  shopId      String
-  shop        Shop                @relation(fields: [shopId], references: [id])
-  employeeId  String
-  actionType  String // e.g. "refund", "bulk_catalog_edit", "purchase_order"
-  summary     String // short human-readable description for the action card
-  payload     String // JSON-encoded action detail (order id, amount, diff, …)
-  status      PendingActionStatus @default(PENDING)
-  createdAt   DateTime            @default(now())
-  decidedAt   DateTime?
-  decidedBy   String? // operator user id/email, when known
-  executedAt  DateTime?
+  id            String    @id @default(cuid())
+  shopId        String
+  shop          Shop      @relation(fields: [shopId], references: [id])
+  employeeId    String
+  actionType    String // e.g. "refund", "bulk_catalog_edit", "purchase_order"
+  summary       String // short human-readable description for the action card
+  payload       String // JSON-encoded action detail (order id, amount, diff, …)
+  status        String    @default("PENDING")
+  createdAt     DateTime  @default(now())
+  decidedAt     DateTime?
+  decidedBy     String? // operator user id/email, when known
+  executedAt    DateTime?
   failureReason String?
 
   @@index([shopId, status])
