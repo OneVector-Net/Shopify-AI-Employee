@@ -89,7 +89,11 @@ export default function Dashboard() {
           })}
         </InlineGrid>
 
-        <InlineGrid columns={{ xs: 1, md: ["2fr", "1fr"] }} gap="300">
+        {/* Equal columns rather than the wireframe's 2:1 ratio — this
+            Polaris version's InlineGrid doesn't type-check fr-unit
+            shorthand ("2fr"/"1fr"); not worth a custom Grid just for the
+            ratio at scaffold stage. */}
+        <InlineGrid columns={2} gap="300">
           <Card>
             <BlockStack gap="300">
               <Text as="h3" variant="headingSm">

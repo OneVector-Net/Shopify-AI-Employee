@@ -23,6 +23,28 @@ because it gives native Polaris components for free rather than hand-
 rebuilding Shopify's design system (see the wireframe discussion this
 scaffold follows up on).
 
+## CI
+
+`.github/workflows/ci.yml` runs on every PR and every push to `main`:
+`prisma validate`, `prisma generate`, then `tsc --noEmit`. No database is
+set up for it — neither step needs one. This exists specifically because
+every one of the bugs caught by hand while building this scaffold
+(SQLite not supporting Prisma's native enum type, a couple of Polaris
+typing issues) would have been caught automatically by this same check —
+it should run on every future employee's PR too.
+
+**Known issue, not fixed here:** `npm audit` currently reports 21
+vulnerabilities (1 critical, 14 high) — all in transitive **dev-tooling**
+dependencies (`@remix-run/dev`, `vite`, `esbuild`, `tar`, and what they
+pull in), not production runtime code that ships to a merchant's browser
+or server. `npm audit fix` resolves none of them without `--force`, which
+would bump major versions of the Remix/Vite toolchain without a way to
+verify compatibility against Shopify's stack from this environment (same
+shopify.dev access limitation noted elsewhere in this file). Worth
+revisiting from an environment that can check current compatible
+versions before this goes much further — don't ignore it, but also don't
+force a toolchain upgrade blind.
+
 ## What's deliberately stubbed, not yet real
 
 - **Connectors** (`app/lib/connectors/gorgias.ts`, `klaviyo.ts`) return
