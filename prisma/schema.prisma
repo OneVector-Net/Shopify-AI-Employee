@@ -1,0 +1,164 @@
+// Core data model for the Shopify AI Employees platform.
+// Maps directly to the PRD sections "Architecture" and
+// "Permissions & Guardrails" — see /README.md for the mapping.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Required by @shopify/shopify-app-session-storage-prisma.
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+// One row per installed merchant store.
+model Shop {
+  id          String   @id @default(cuid())
+  domain      String   @unique
+  installedAt DateTime @default(now())
+
+  employeeStates     EmployeeState[]
+  connectorCredentials ConnectorCredential[]
+  guardrailSettings  GuardrailSetting[]
+  pendingActions     PendingAction[]
+  auditLogEntries    AuditLogEntry[]
+}
+
+// Which employees a shop has enabled, and at what permission tier.
+// PermissionTier is the "single app, scope-toggle" model (PRD feature #17):
+// every employee starts READ_ONLY and is only escalated with an explicit
+// operator action per employee.
+enum PermissionTier {
+  READ_ONLY
+  WRITE_SCOPED // can draft/propose actions; nothing executes without approval
+}
+
+model EmployeeState {
+  id                String         @id @default(cuid())
+  shopId            String
+  shop              Shop           @relation(fields: [shopId], references: [id])
+  employeeId        String // "liz" | "sam" | "max" | "mia" | "ellie" — see app/lib/employees.ts
+  enabled           Boolean        @default(false)
+  permissionTier    PermissionTier @default(READ_ONLY)
+  onboardingComplete Boolean       @default(false)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@unique([shopId, employeeId])
+}
+
+// One row per third-party app a shop has connected a given employee to
+// (e.g. Sam <-> Gorgias). Tokens are never stored in plaintext here —
+// `secretRef` points at the secrets vault (see app/lib/connectors/README.md);
+// this table only tracks connection *state*, never the credential itself.
+enum ConnectorStatus {
+  CONNECTED
+  DEGRADED // reachable but failing health checks / stale data
+  DISCONNECTED
+}
+
+model ConnectorCredential {
+  id               String          @id @default(cuid())
+  shopId           String
+  shop             Shop            @relation(fields: [shopId], references: [id])
+  connectorId      String // "klaviyo" | "gorgias" | "aftership" | ... — see app/lib/connectors/registry.ts
+  employeeId       String // which employee this connection serves
+  status           ConnectorStatus @default(DISCONNECTED)
+  secretRef        String? // opaque pointer into the secrets vault, never a raw token
+  scopesGranted    String? // comma-separated scopes actually granted
+  lastHealthCheckAt DateTime?
+  lastHealthOk     Boolean?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([shopId, connectorId, employeeId])
+}
+
+// Hard vs. soft guardrails (PRD "Permissions & Guardrails").
+// HARD rows are seeded by code (see app/lib/guardrails.server.ts) and are
+// not editable through the normal settings UI — they exist here only so
+// the UI has something to *display*. SOFT rows are the operator-editable
+// ones (e.g. Sam's refund ceiling).
+enum GuardrailKind {
+  HARD
+  SOFT
+}
+
+model GuardrailSetting {
+  id         String        @id @default(cuid())
+  shopId     String
+  shop       Shop          @relation(fields: [shopId], references: [id])
+  employeeId String
+  key        String // e.g. "refund_ceiling_usd", "return_window_days"
+  kind       GuardrailKind
+  value      String // stored as a string; interpreted per-key in code
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([shopId, employeeId, key])
+}
+
+// The confirm-to-execute queue (PRD feature #18). An employee that wants
+// to take a write action creates a PendingAction instead of acting
+// directly; nothing in `payload` is executed until an operator approves it.
+enum PendingActionStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  EXECUTED
+  FAILED
+}
+
+model PendingAction {
+  id          String              @id @default(cuid())
+  shopId      String
+  shop        Shop                @relation(fields: [shopId], references: [id])
+  employeeId  String
+  actionType  String // e.g. "refund", "bulk_catalog_edit", "purchase_order"
+  summary     String // short human-readable description for the action card
+  payload     String // JSON-encoded action detail (order id, amount, diff, …)
+  status      PendingActionStatus @default(PENDING)
+  createdAt   DateTime            @default(now())
+  decidedAt   DateTime?
+  decidedBy   String? // operator user id/email, when known
+  executedAt  DateTime?
+  failureReason String?
+
+  @@index([shopId, status])
+}
+
+// Append-only audit trail (PRD "Non-Functional Requirements" — Security,
+// Failure & Rollback, Accountability & Liability all depend on this).
+// Never update or delete rows here from application code.
+model AuditLogEntry {
+  id              String   @id @default(cuid())
+  shopId          String
+  shop            Shop     @relation(fields: [shopId], references: [id])
+  employeeId      String?
+  actorType       String // "EMPLOYEE" | "OPERATOR" | "SYSTEM"
+  actionType      String
+  summary         String
+  payload         String? // JSON-encoded detail; snapshot for rollback reference
+  pendingActionId String? // links back to the approval it came from, if any
+  createdAt       DateTime @default(now())
+
+  @@index([shopId, createdAt])
+}

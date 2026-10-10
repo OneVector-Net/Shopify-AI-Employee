@@ -1,0 +1,28 @@
+name = "Shopify AI Employees"
+client_id = ""
+application_url = "https://example.com"
+embedded = true
+
+[access_scopes]
+# Start narrow — read-only by default (feature #17/#18 in the PRD).
+# Write scopes are requested per-employee, per-action, only once the
+# operator opts in via the permission-upgrade flow. Never request
+# write_* scopes here at app-install time.
+scopes = "read_orders,read_products,read_customers"
+
+[auth]
+redirect_urls = [
+  "https://example.com/auth/callback",
+  "https://example.com/auth/shopify/callback",
+  "https://example.com/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2024-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/webhooks/app/uninstalled"
+
+[pos]
+embedded = false
