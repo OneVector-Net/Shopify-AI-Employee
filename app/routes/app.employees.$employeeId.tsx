@@ -7,12 +7,15 @@ import {
   Box,
   Button,
   Card,
+  DataTable,
   InlineStack,
   Page,
   Text,
 } from "@shopify/polaris";
 import db from "~/db.server";
+import { shopifyCatalogConnector } from "~/lib/connectors/shopify-catalog";
 import { shopifyOrdersConnector } from "~/lib/connectors/shopify-orders";
+import { buildSeoDiffs, proposeSeoBulkUpdate } from "~/lib/ellie.server";
 import { EMPLOYEES, type EmployeeId } from "~/lib/employees";
 import { decidePendingAction, getGuardrails } from "~/lib/guardrails.server";
 import { buildRefundDraft, proposeRefund, type RefundDraft } from "~/lib/sam.server";
@@ -50,14 +53,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const guardrails = await getGuardrails(shop.id, employeeId);
 
-  // Only Sam has a real workflow wired up so far on this branch (Ellie's
-  // lives on a separate, not-yet-merged PR — the two will need combining
-  // here once both land, the same way the CI and Ellie PRs needed
-  // combining in schema.prisma/README.md).
+  // Only Ellie and Sam have real workflows wired up so far (see README) —
+  // the other three employees get the generic page below until their
+  // connectors are built the same way.
+  const seoDiffs =
+    employeeId === "ellie" && state.enabled ? await buildSeoDiffs(shop.id, 10) : [];
   const refundDraft: RefundDraft | null =
     employeeId === "sam" && state.enabled ? await buildRefundDraft(shop.id) : null;
 
-  return json({ employeeId, state, pendingActions, guardrails, refundDraft });
+  return json({ employeeId, state, pendingActions, guardrails, seoDiffs, refundDraft });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -88,6 +92,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return redirect(`/app/employees/${employeeId}`);
   }
 
+  if (intent === "propose_seo_update" && employeeId === "ellie") {
+    const diffs = await buildSeoDiffs(shop.id, 10);
+    if (diffs.length > 0) {
+      await proposeSeoBulkUpdate(shop.id, diffs);
+    }
+    return redirect(`/app/employees/${employeeId}`);
+  }
+
   if (intent === "propose_refund" && employeeId === "sam") {
     // Recompute the draft server-side rather than trusting anything the
     // client posted back — never trust a client-submitted amount for a
@@ -114,6 +126,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // feature #18 / app/lib/connectors/README.md) — this is the one
     // place in the codebase that calls a connector's execute() after
     // seeing an APPROVED decision.
+    if (intent === "approve" && employeeId === "ellie") {
+      const payload = JSON.parse(decided.payload) as {
+        diffs: { productId: string; after: string }[];
+      };
+      const result = await shopifyCatalogConnector.execute(shop.id, decided.id, payload);
+      await db.pendingAction.update({
+        where: { id: decided.id },
+        data: {
+          status: result.ok ? "EXECUTED" : "FAILED",
+          executedAt: new Date(),
+          failureReason: result.ok ? null : result.message,
+        },
+      });
+    }
     if (intent === "approve" && employeeId === "sam") {
       const payload = JSON.parse(decided.payload) as RefundDraft;
       const result = await shopifyOrdersConnector.execute(shop.id, decided.id, payload);
@@ -134,7 +160,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EmployeeWorkspace() {
-  const { employeeId, state, pendingActions, guardrails, refundDraft } =
+  const { employeeId, state, pendingActions, guardrails, seoDiffs, refundDraft } =
     useLoaderData<typeof loader>();
   const employee = EMPLOYEES[employeeId as EmployeeId];
 
@@ -174,6 +200,34 @@ export default function EmployeeWorkspace() {
             ))}
           </BlockStack>
         </Card>
+
+        {employeeId === "ellie" && state.enabled && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingSm">
+                Bulk SEO update — preview
+              </Text>
+              {seoDiffs.length === 0 ? (
+                <Text as="p" tone="subdued">
+                  No pending suggestions right now — every scanned product already has a
+                  description.
+                </Text>
+              ) : (
+                <>
+                  <DataTable
+                    columnContentTypes={["text", "text", "text"]}
+                    headings={["Product", "Current", "Proposed"]}
+                    rows={seoDiffs.map((d) => [d.title, d.before || "(empty)", d.after])}
+                  />
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="propose_seo_update" />
+                    <Button submit>{`Propose this update (${seoDiffs.length} products)`}</Button>
+                  </Form>
+                </>
+              )}
+            </BlockStack>
+          </Card>
+        )}
 
         {employeeId === "sam" && state.enabled && (
           <Card>
@@ -223,12 +277,12 @@ export default function EmployeeWorkspace() {
           </Card>
         )}
 
-        {employeeId !== "sam" && (
+        {employeeId !== "ellie" && employeeId !== "sam" && (
           <Card>
             <Text as="p" tone="subdued">
-              {employee.name}&apos;s real workflow isn&apos;t built on this branch yet. This
-              page shows guardrails and will gain a real workflow the same way once it&apos;s
-              this employee&apos;s turn.
+              {employee.name}&apos;s real workflow isn&apos;t built yet — Ellie and Sam are
+              wired end-to-end so far. This page shows guardrails and will gain a real
+              workflow the same way once it&apos;s this employee&apos;s turn.
             </Text>
           </Card>
         )}

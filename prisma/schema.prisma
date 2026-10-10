@@ -76,7 +76,7 @@ model ConnectorCredential {
   id                String    @id @default(cuid())
   shopId            String
   shop              Shop      @relation(fields: [shopId], references: [id])
-  connectorId       String // "klaviyo" | "gorgias" | "aftership" | ... — see app/lib/connectors/registry.ts
+  connectorId       String // "klaviyo" | "gorgias" | "shopify_catalog" | ... — see app/lib/connectors/registry.ts
   employeeId        String // which employee this connection serves
   status            String    @default("DISCONNECTED")
   secretRef         String? // opaque pointer into the secrets vault, never a raw token
