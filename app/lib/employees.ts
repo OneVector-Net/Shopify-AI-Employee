@@ -77,7 +77,10 @@ export const EMPLOYEES: Record<EmployeeId, EmployeeDefinition> = {
     painPoint: "Catalog management & administrative overhead",
     avatarInitial: "E",
     accentColor: "#c77d2e",
-    connectors: ["aibulk", "avadaai"],
+    // shopify_catalog needs no third-party OAuth at all — it's the first
+    // connector built end-to-end (see app/lib/connectors/shopify-catalog.ts)
+    // precisely because it has the fewest external failure points.
+    connectors: ["shopify_catalog", "aibulk", "avadaai"],
     hardGuardrails: [
       "No irreversible bulk catalog action without preview/approval",
       "No publishing regulated/compliance-sensitive claims without human review",
